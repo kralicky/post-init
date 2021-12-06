@@ -1,0 +1,160 @@
+syntax = "proto3";
+option go_package = "github.com/kralicky/post-init/pkg/api";
+package api;
+
+service Relay {
+  rpc Announce(Announcement) returns (Response) {}
+  rpc StreamInstructions(stream InstructionResponse) returns (stream Instruction) {}
+  
+  rpc ClientConnect(stream ClientConnectRequest) returns (stream ClientConnectResponse) {}
+  rpc Notify(NotifyMatch) returns (stream NotifyResponse) {}
+  rpc SendInstruction(Instruction) returns (InstructionResponse) {}
+}
+
+message Response {
+  bool Accept = 1;
+  string Message = 2;
+}
+
+message Instruction {
+  oneof Instruction {
+    Dismiss Dismiss = 1;
+    Command Command = 2;
+    Script Script = 3;
+  }
+}
+
+message InstructionRequest {
+  string Fingerprint = 1;
+  Instruction Instruction = 2;
+}
+
+message InstructionResponse {
+  string Fingerprint = 1;
+  Result Result = 2;
+  string Error = 3;
+  oneof instruction {
+    CommandOutput CommandOutput = 4;
+    ScriptOutput ScriptOutput = 5;
+  }
+}
+
+enum Result {
+  Success = 0;
+  Error = 1;
+}
+
+message Dismiss {}
+
+enum Operator {
+  And = 0;
+  Or = 1;
+}
+
+message NotifyMatch {
+  Operator Operator = 1;
+  string HasAuthorizedKey = 2;
+  string HasIPAddress = 3;
+  string HasHostname = 4;
+}
+
+message NotifyResponse {
+  string Fingerprint = 1;
+  Announcement Announcement = 2;
+}
+
+message Command {
+  string Command = 1;
+  repeated string Args = 2;
+  repeated string Env = 3;
+}
+
+message Script {
+  string Interpreter = 1;
+  string Script = 2;
+  repeated string Args = 3;
+}
+
+message CommandOutput {
+  int32 ExitCode = 2;
+  string Stdout = 3;
+  string Stderr = 4;
+}
+
+message ScriptOutput {
+  int32 ExitCode = 1;
+  string Stdout = 2;
+  string Stderr = 3;
+}
+
+message Announcement {
+  UnameInfo Uname = 1;
+  NetworkInfo Network = 2;
+  bytes PreferredHostPublicKey = 3;
+  repeated AuthorizedKey AuthorizedKeys = 4;
+}
+
+message UnameInfo {
+  string KernelName = 1;
+  string Hostname = 2;
+  string KernelRelease = 3;
+  string KernelVersion = 4;
+  string Machine = 5;
+}
+
+message NetworkInfo {
+  repeated NetworkInterface NetworkInterfaces = 1;
+}
+
+message NetworkInterface {
+  string Device = 1;
+  bool Up = 2;
+  repeated Addr Addresses = 3;
+}
+
+message Addr {
+  string Cidr = 1;
+  string Address = 2;
+  string Mask = 3;
+}
+
+message AuthorizedKey {
+  string User = 1;
+  string Type = 2;
+  string Fingerprint = 3;
+  string Comment = 5;
+  repeated string Options = 4;
+}
+
+message ClientConnectRequest {
+  oneof Request {
+    ConnectionRequest ConnectionRequest = 1;
+    KexResponse KexResponse = 2;
+  }
+}
+
+message ClientConnectResponse {
+  oneof Response {
+    ConnectionResponse ConnectionResponse = 1;
+    KexRequest KexRequest = 2;
+  }
+}
+
+message ConnectionRequest {
+  bytes PublicClientKey = 1;
+}
+
+message ConnectionResponse {
+  bool Accept = 1;
+}
+
+message KexRequest {
+  bytes Nonce = 1;
+  bytes PublicHostKey = 2;
+  bytes ServerEphemeralPublicKey = 3;
+}
+
+message KexResponse {
+  bytes ClientEphemeralPublicKey = 1;
+  bytes Signature = 2;
+}
