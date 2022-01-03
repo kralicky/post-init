@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"os"
 
 	"github.com/kralicky/post-init/pkg/api"
 	"github.com/kralicky/post-init/pkg/kex"
@@ -24,16 +23,14 @@ type ClientConfig struct {
 	CACert string
 	// SSH keypair which the relay server will verify and use to
 	// authenticate the client with any daemons that connect.
-	KeyPair KeyPair
-}
-
-type KeyPair struct {
-	PublicKey      ssh.PublicKey
-	PrivateKeyPath string
+	Signer ssh.Signer
 }
 
 type RelayClient struct {
-	conf *ClientConfig
+	conf      *ClientConfig
+	client    api.RelayClient
+	clientId  string
+	callbacks []NotifyCallback
 }
 
 func NewRelayClient(conf *ClientConfig) (*RelayClient, error) {
@@ -63,14 +60,14 @@ func (rc *RelayClient) Connect(ctx context.Context) error {
 		return err
 	}
 
-	relayClient := api.NewRelayClient(cc)
-	stream, err := relayClient.ClientConnect(ctx)
+	rc.client = api.NewRelayClient(cc)
+	stream, err := rc.client.ClientConnect(ctx)
 	if err != nil {
 		return err
 	}
 
 	connectionRequest := &api.ConnectionRequest{
-		PublicClientKey: rc.conf.KeyPair.PublicKey.Marshal(),
+		PublicClientKey: rc.conf.Signer.PublicKey().Marshal(),
 	}
 	if err := stream.Send(&api.ClientConnectRequest{
 		Request: &api.ClientConnectRequest_ConnectionRequest{
@@ -106,19 +103,26 @@ func (rc *RelayClient) handleConnectionStream(
 			return
 		}
 		switch r := r.GetResponse().(type) {
+		case *api.ClientConnectResponse_NotifyResponse:
+			resp := r.NotifyResponse
+			go func() {
+				cctx := &ControlContext{
+					ctx:    stream.Context(),
+					client: rc.client,
+					fp:     resp.GetFingerprint(),
+					an:     resp.GetAnnouncement(),
+				}
+				for _, callback := range rc.callbacks {
+					go callback(cctx)
+				}
+				if !cctx.dismissed {
+					if err := cctx.Dismiss(); err != nil {
+						logrus.Errorf("Failed to dismiss: %v", err)
+					}
+				}
+			}()
 		case *api.ClientConnectResponse_KexRequest:
 			kr := r.KexRequest
-
-			privateKeyData, err := os.ReadFile(rc.conf.KeyPair.PrivateKeyPath)
-			if err != nil {
-				logrus.Errorf("failed to read private key: %v", err)
-				return
-			}
-			privateKey, err := ssh.ParsePrivateKey(privateKeyData)
-			if err != nil {
-				logrus.Errorf("failed to parse private key: %v", err)
-				return
-			}
 
 			ephPriv, ephPub, err := kex.GenerateKeyPair()
 			if err != nil {
@@ -134,9 +138,9 @@ func (rc *RelayClient) handleConnectionStream(
 			signature, err := kex.Sign(
 				r.KexRequest,
 				ephPub,
-				rc.conf.KeyPair.PublicKey.Marshal(),
+				rc.conf.Signer.PublicKey().Marshal(),
 				sharedSecret,
-				privateKey,
+				rc.conf.Signer,
 			)
 
 			if err != nil {
@@ -157,4 +161,100 @@ func (rc *RelayClient) handleConnectionStream(
 			}
 		}
 	}
+}
+
+var ErrAlreadyDismissed = fmt.Errorf("already dismissed")
+
+type ControlContext struct {
+	ctx       context.Context
+	client    api.RelayClient
+	fp        string
+	an        *api.Announcement
+	dismissed bool
+}
+
+func (cc *ControlContext) Announcement() *api.Announcement {
+	return cc.an
+}
+
+func (cc *ControlContext) RunCommand(cmd *api.Command) (*api.CommandOutput, error) {
+	if cc.dismissed {
+		return nil, ErrAlreadyDismissed
+	}
+	if err := cc.ctx.Err(); err != nil {
+		return nil, err
+	}
+	resp, err := cc.client.SendInstruction(cc.ctx, &api.InstructionRequest{
+		Fingerprint: cc.fp,
+		Instruction: &api.Instruction{
+			Instruction: &api.Instruction_Command{
+				Command: cmd,
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.GetCommandOutput(), nil
+}
+
+func (cc *ControlContext) RunScript(sc *api.Script) (*api.ScriptOutput, error) {
+	if cc.dismissed {
+		return nil, ErrAlreadyDismissed
+	}
+	if err := cc.ctx.Err(); err != nil {
+		return nil, err
+	}
+	resp, err := cc.client.SendInstruction(cc.ctx, &api.InstructionRequest{
+		Fingerprint: cc.fp,
+		Instruction: &api.Instruction{
+			Instruction: &api.Instruction_Script{
+				Script: sc,
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.GetScriptOutput(), nil
+}
+
+func (cc *ControlContext) Dismiss() error {
+	if !cc.dismissed {
+		cc.dismissed = true
+	} else if err := cc.ctx.Err(); err != nil {
+		cc.dismissed = true
+		return err
+	} else {
+		return nil
+	}
+	_, err := cc.client.SendInstruction(cc.ctx, &api.InstructionRequest{
+		Fingerprint: cc.fp,
+		Instruction: &api.Instruction{
+			Instruction: &api.Instruction_Dismiss{
+				Dismiss: &api.Dismiss{},
+			},
+		},
+	})
+	return err
+}
+
+type NotifyCallback func(*ControlContext)
+
+func (rc *RelayClient) Notify(
+	ctx context.Context,
+	filter *api.BasicFilter,
+	callback NotifyCallback,
+) error {
+	response, err := rc.client.Notify(ctx, &api.NotifyRequest{
+		ClientId: rc.clientId,
+	})
+	if err != nil {
+		return err
+	}
+	if !response.Accept {
+		return fmt.Errorf("server rejected notify request")
+	}
+	rc.callbacks = append(rc.callbacks, callback)
+	return nil
 }

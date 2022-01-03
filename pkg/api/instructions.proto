@@ -1,0 +1,43 @@
+
+syntax = "proto3";
+option go_package = "github.com/kralicky/post-init/pkg/api";
+import "google/protobuf/empty.proto";
+package api;
+
+message InstructionMeta {
+  string PeerFingerprint = 1;
+}
+
+message CommandRequest {
+  InstructionMeta Meta = 1;
+  Command Command = 2;
+}
+
+message Command {
+  string Command = 1;
+  repeated string Args = 2;
+  repeated string Env = 3;
+}
+
+message ScriptRequest {
+  InstructionMeta Meta = 1;
+  Script Script = 2;
+}
+
+message Script {
+  string Interpreter = 1;
+  string Script = 2;
+  repeated string Args = 3;
+}
+
+message CommandResponse {
+  int32 ExitCode = 2;
+  string Stdout = 3;
+  string Stderr = 4;
+}
+
+message ScriptResponse {
+  int32 ExitCode = 1;
+  string Stdout = 2;
+  string Stderr = 3;
+}

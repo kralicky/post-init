@@ -8,6 +8,7 @@ package api
 
 import (
 	context "context"
+	totem "github.com/kralicky/totem"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -22,11 +23,8 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type RelayClient interface {
-	Announce(ctx context.Context, in *Announcement, opts ...grpc.CallOption) (*Response, error)
-	StreamInstructions(ctx context.Context, opts ...grpc.CallOption) (Relay_StreamInstructionsClient, error)
-	ClientConnect(ctx context.Context, opts ...grpc.CallOption) (Relay_ClientConnectClient, error)
-	Notify(ctx context.Context, in *NotifyMatch, opts ...grpc.CallOption) (Relay_NotifyClient, error)
-	SendInstruction(ctx context.Context, in *Instruction, opts ...grpc.CallOption) (*InstructionResponse, error)
+	PostletStream(ctx context.Context, opts ...grpc.CallOption) (Relay_PostletStreamClient, error)
+	ClientStream(ctx context.Context, opts ...grpc.CallOption) (Relay_ClientStreamClient, error)
 }
 
 type relayClient struct {
@@ -37,127 +35,74 @@ func NewRelayClient(cc grpc.ClientConnInterface) RelayClient {
 	return &relayClient{cc}
 }
 
-func (c *relayClient) Announce(ctx context.Context, in *Announcement, opts ...grpc.CallOption) (*Response, error) {
-	out := new(Response)
-	err := c.cc.Invoke(ctx, "/api.Relay/Announce", in, out, opts...)
+func (c *relayClient) PostletStream(ctx context.Context, opts ...grpc.CallOption) (Relay_PostletStreamClient, error) {
+	stream, err := c.cc.NewStream(ctx, &Relay_ServiceDesc.Streams[0], "/api.Relay/PostletStream", opts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
-}
-
-func (c *relayClient) StreamInstructions(ctx context.Context, opts ...grpc.CallOption) (Relay_StreamInstructionsClient, error) {
-	stream, err := c.cc.NewStream(ctx, &Relay_ServiceDesc.Streams[0], "/api.Relay/StreamInstructions", opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &relayStreamInstructionsClient{stream}
+	x := &relayPostletStreamClient{stream}
 	return x, nil
 }
 
-type Relay_StreamInstructionsClient interface {
-	Send(*InstructionResponse) error
-	Recv() (*Instruction, error)
+type Relay_PostletStreamClient interface {
+	Send(*totem.RPC) error
+	Recv() (*totem.RPC, error)
 	grpc.ClientStream
 }
 
-type relayStreamInstructionsClient struct {
+type relayPostletStreamClient struct {
 	grpc.ClientStream
 }
 
-func (x *relayStreamInstructionsClient) Send(m *InstructionResponse) error {
+func (x *relayPostletStreamClient) Send(m *totem.RPC) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *relayStreamInstructionsClient) Recv() (*Instruction, error) {
-	m := new(Instruction)
+func (x *relayPostletStreamClient) Recv() (*totem.RPC, error) {
+	m := new(totem.RPC)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-func (c *relayClient) ClientConnect(ctx context.Context, opts ...grpc.CallOption) (Relay_ClientConnectClient, error) {
-	stream, err := c.cc.NewStream(ctx, &Relay_ServiceDesc.Streams[1], "/api.Relay/ClientConnect", opts...)
+func (c *relayClient) ClientStream(ctx context.Context, opts ...grpc.CallOption) (Relay_ClientStreamClient, error) {
+	stream, err := c.cc.NewStream(ctx, &Relay_ServiceDesc.Streams[1], "/api.Relay/ClientStream", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &relayClientConnectClient{stream}
+	x := &relayClientStreamClient{stream}
 	return x, nil
 }
 
-type Relay_ClientConnectClient interface {
-	Send(*ClientConnectRequest) error
-	Recv() (*ClientConnectResponse, error)
+type Relay_ClientStreamClient interface {
+	Send(*totem.RPC) error
+	Recv() (*totem.RPC, error)
 	grpc.ClientStream
 }
 
-type relayClientConnectClient struct {
+type relayClientStreamClient struct {
 	grpc.ClientStream
 }
 
-func (x *relayClientConnectClient) Send(m *ClientConnectRequest) error {
+func (x *relayClientStreamClient) Send(m *totem.RPC) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *relayClientConnectClient) Recv() (*ClientConnectResponse, error) {
-	m := new(ClientConnectResponse)
+func (x *relayClientStreamClient) Recv() (*totem.RPC, error) {
+	m := new(totem.RPC)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
-}
-
-func (c *relayClient) Notify(ctx context.Context, in *NotifyMatch, opts ...grpc.CallOption) (Relay_NotifyClient, error) {
-	stream, err := c.cc.NewStream(ctx, &Relay_ServiceDesc.Streams[2], "/api.Relay/Notify", opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &relayNotifyClient{stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-type Relay_NotifyClient interface {
-	Recv() (*NotifyResponse, error)
-	grpc.ClientStream
-}
-
-type relayNotifyClient struct {
-	grpc.ClientStream
-}
-
-func (x *relayNotifyClient) Recv() (*NotifyResponse, error) {
-	m := new(NotifyResponse)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func (c *relayClient) SendInstruction(ctx context.Context, in *Instruction, opts ...grpc.CallOption) (*InstructionResponse, error) {
-	out := new(InstructionResponse)
-	err := c.cc.Invoke(ctx, "/api.Relay/SendInstruction", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 // RelayServer is the server API for Relay service.
 // All implementations must embed UnimplementedRelayServer
 // for forward compatibility
 type RelayServer interface {
-	Announce(context.Context, *Announcement) (*Response, error)
-	StreamInstructions(Relay_StreamInstructionsServer) error
-	ClientConnect(Relay_ClientConnectServer) error
-	Notify(*NotifyMatch, Relay_NotifyServer) error
-	SendInstruction(context.Context, *Instruction) (*InstructionResponse, error)
+	PostletStream(Relay_PostletStreamServer) error
+	ClientStream(Relay_ClientStreamServer) error
 	mustEmbedUnimplementedRelayServer()
 }
 
@@ -165,20 +110,11 @@ type RelayServer interface {
 type UnimplementedRelayServer struct {
 }
 
-func (UnimplementedRelayServer) Announce(context.Context, *Announcement) (*Response, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Announce not implemented")
+func (UnimplementedRelayServer) PostletStream(Relay_PostletStreamServer) error {
+	return status.Errorf(codes.Unimplemented, "method PostletStream not implemented")
 }
-func (UnimplementedRelayServer) StreamInstructions(Relay_StreamInstructionsServer) error {
-	return status.Errorf(codes.Unimplemented, "method StreamInstructions not implemented")
-}
-func (UnimplementedRelayServer) ClientConnect(Relay_ClientConnectServer) error {
-	return status.Errorf(codes.Unimplemented, "method ClientConnect not implemented")
-}
-func (UnimplementedRelayServer) Notify(*NotifyMatch, Relay_NotifyServer) error {
-	return status.Errorf(codes.Unimplemented, "method Notify not implemented")
-}
-func (UnimplementedRelayServer) SendInstruction(context.Context, *Instruction) (*InstructionResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SendInstruction not implemented")
+func (UnimplementedRelayServer) ClientStream(Relay_ClientStreamServer) error {
+	return status.Errorf(codes.Unimplemented, "method ClientStream not implemented")
 }
 func (UnimplementedRelayServer) mustEmbedUnimplementedRelayServer() {}
 
@@ -193,113 +129,56 @@ func RegisterRelayServer(s grpc.ServiceRegistrar, srv RelayServer) {
 	s.RegisterService(&Relay_ServiceDesc, srv)
 }
 
-func _Relay_Announce_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Announcement)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(RelayServer).Announce(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/api.Relay/Announce",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RelayServer).Announce(ctx, req.(*Announcement))
-	}
-	return interceptor(ctx, in, info, handler)
+func _Relay_PostletStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(RelayServer).PostletStream(&relayPostletStreamServer{stream})
 }
 
-func _Relay_StreamInstructions_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(RelayServer).StreamInstructions(&relayStreamInstructionsServer{stream})
-}
-
-type Relay_StreamInstructionsServer interface {
-	Send(*Instruction) error
-	Recv() (*InstructionResponse, error)
+type Relay_PostletStreamServer interface {
+	Send(*totem.RPC) error
+	Recv() (*totem.RPC, error)
 	grpc.ServerStream
 }
 
-type relayStreamInstructionsServer struct {
+type relayPostletStreamServer struct {
 	grpc.ServerStream
 }
 
-func (x *relayStreamInstructionsServer) Send(m *Instruction) error {
+func (x *relayPostletStreamServer) Send(m *totem.RPC) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *relayStreamInstructionsServer) Recv() (*InstructionResponse, error) {
-	m := new(InstructionResponse)
+func (x *relayPostletStreamServer) Recv() (*totem.RPC, error) {
+	m := new(totem.RPC)
 	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-func _Relay_ClientConnect_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(RelayServer).ClientConnect(&relayClientConnectServer{stream})
+func _Relay_ClientStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(RelayServer).ClientStream(&relayClientStreamServer{stream})
 }
 
-type Relay_ClientConnectServer interface {
-	Send(*ClientConnectResponse) error
-	Recv() (*ClientConnectRequest, error)
+type Relay_ClientStreamServer interface {
+	Send(*totem.RPC) error
+	Recv() (*totem.RPC, error)
 	grpc.ServerStream
 }
 
-type relayClientConnectServer struct {
+type relayClientStreamServer struct {
 	grpc.ServerStream
 }
 
-func (x *relayClientConnectServer) Send(m *ClientConnectResponse) error {
+func (x *relayClientStreamServer) Send(m *totem.RPC) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *relayClientConnectServer) Recv() (*ClientConnectRequest, error) {
-	m := new(ClientConnectRequest)
+func (x *relayClientStreamServer) Recv() (*totem.RPC, error) {
+	m := new(totem.RPC)
 	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
-}
-
-func _Relay_Notify_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(NotifyMatch)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(RelayServer).Notify(m, &relayNotifyServer{stream})
-}
-
-type Relay_NotifyServer interface {
-	Send(*NotifyResponse) error
-	grpc.ServerStream
-}
-
-type relayNotifyServer struct {
-	grpc.ServerStream
-}
-
-func (x *relayNotifyServer) Send(m *NotifyResponse) error {
-	return x.ServerStream.SendMsg(m)
-}
-
-func _Relay_SendInstruction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Instruction)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(RelayServer).SendInstruction(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/api.Relay/SendInstruction",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RelayServer).SendInstruction(ctx, req.(*Instruction))
-	}
-	return interceptor(ctx, in, info, handler)
 }
 
 // Relay_ServiceDesc is the grpc.ServiceDesc for Relay service.
@@ -308,33 +187,19 @@ func _Relay_SendInstruction_Handler(srv interface{}, ctx context.Context, dec fu
 var Relay_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "api.Relay",
 	HandlerType: (*RelayServer)(nil),
-	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "Announce",
-			Handler:    _Relay_Announce_Handler,
-		},
-		{
-			MethodName: "SendInstruction",
-			Handler:    _Relay_SendInstruction_Handler,
-		},
-	},
+	Methods:     []grpc.MethodDesc{},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "StreamInstructions",
-			Handler:       _Relay_StreamInstructions_Handler,
+			StreamName:    "PostletStream",
+			Handler:       _Relay_PostletStream_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},
 		{
-			StreamName:    "ClientConnect",
-			Handler:       _Relay_ClientConnect_Handler,
+			StreamName:    "ClientStream",
+			Handler:       _Relay_ClientStream_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
-		},
-		{
-			StreamName:    "Notify",
-			Handler:       _Relay_Notify_Handler,
-			ServerStreams: true,
 		},
 	},
 	Metadata: "pkg/api/relay.proto",

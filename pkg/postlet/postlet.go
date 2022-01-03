@@ -1,9 +1,12 @@
-package daemon
+package postlet
 
 import (
 	"context"
 	"crypto/tls"
+	"os/user"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 
 	"github.com/kralicky/post-init/pkg/api"
 	"github.com/kralicky/post-init/pkg/host"
@@ -13,62 +16,69 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-type DaemonOptions struct {
-	relayAddress string
-	relayCACert  string
-	insecure     bool
-	timeout      time.Duration
+type PostletOptions struct {
+	relayAddress        string
+	relayCACert         string
+	insecure            bool
+	timeout             time.Duration
+	extraAuthorizedKeys []string
 }
 
-type DaemonOption func(*DaemonOptions)
+type PostletOption func(*PostletOptions)
 
-func (o *DaemonOptions) Apply(opts ...DaemonOption) {
+func (o *PostletOptions) Apply(opts ...PostletOption) {
 	for _, op := range opts {
 		op(o)
 	}
 }
 
-func WithRelayAddress(addr string) DaemonOption {
-	return func(o *DaemonOptions) {
+func WithRelayAddress(addr string) PostletOption {
+	return func(o *PostletOptions) {
 		o.relayAddress = addr
 	}
 }
 
-func WithRelayCACert(certFilePath string) DaemonOption {
-	return func(o *DaemonOptions) {
+func WithRelayCACert(certFilePath string) PostletOption {
+	return func(o *PostletOptions) {
 		o.relayCACert = certFilePath
 	}
 }
 
-func WithInsecure(insecure bool) DaemonOption {
-	return func(o *DaemonOptions) {
+func WithInsecure(insecure bool) PostletOption {
+	return func(o *PostletOptions) {
 		o.insecure = insecure
 	}
 }
 
-func WithTimeout(d time.Duration) DaemonOption {
-	return func(o *DaemonOptions) {
+func WithTimeout(d time.Duration) PostletOption {
+	return func(o *PostletOptions) {
 		o.timeout = d
 	}
 }
 
-type Daemon struct {
-	options     DaemonOptions
+func WithExtraAuthorizedKeys(keys ...string) PostletOption {
+	return func(o *PostletOptions) {
+		o.extraAuthorizedKeys = keys
+	}
+}
+
+type Postlet struct {
+	options     PostletOptions
 	relayClient api.RelayClient
 }
 
-func NewDaemon(opts ...DaemonOption) *Daemon {
-	options := DaemonOptions{}
+func New(opts ...PostletOption) *Postlet {
+	options := PostletOptions{}
 	options.Apply(opts...)
-	return &Daemon{
+	return &Postlet{
 		options: options,
 	}
 }
 
-func (d *Daemon) Start(ctx context.Context) error {
+func (d *Postlet) Start(ctx context.Context) error {
 	var creds credentials.TransportCredentials
 	if d.options.insecure {
-		logrus.Warn("POST-INIT DAEMON IS RUNNING IN INSECURE MODE - DO NOT USE IN PRODUCTION")
+		logrus.Warn("POSTLET IS RUNNING IN INSECURE MODE - DO NOT USE IN PRODUCTION")
 		creds = insecure.NewCredentials()
 	} else {
 		if d.options.relayCACert != "" {
@@ -98,13 +108,31 @@ func (d *Daemon) Start(ctx context.Context) error {
 	return d.announce(ctx)
 }
 
-func (d *Daemon) announce(ctx context.Context) error {
+func (d *Postlet) announce(ctx context.Context) error {
 	logrus.Infof("Announcing to relay")
+	extraKeys := []*api.AuthorizedKey{}
+	for _, extraKey := range d.options.extraAuthorizedKeys {
+		key, comment, options, _, err := ssh.ParseAuthorizedKey([]byte(extraKey))
+		if err != nil {
+			return err
+		}
+		currentUser, err := user.Current()
+		if err != nil {
+			return err
+		}
+		extraKeys = append(extraKeys, &api.AuthorizedKey{
+			User:        currentUser.Name,
+			Type:        key.Type(),
+			Fingerprint: ssh.FingerprintSHA256(key),
+			Comment:     comment,
+			Options:     options,
+		})
+	}
 	announcement := &api.Announcement{
 		Uname:                  host.GetUnameInfo(),
 		Network:                host.GetNetworkInfo(),
 		PreferredHostPublicKey: host.GetPreferredHostPublicKey().Marshal(),
-		AuthorizedKeys:         host.GetAuthorizedKeys(),
+		AuthorizedKeys:         append(host.GetAuthorizedKeys(), extraKeys...),
 	}
 
 	actx, ca := context.WithTimeout(ctx, d.options.timeout)
@@ -131,10 +159,42 @@ func (d *Daemon) announce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	pk, err := ssh.ParsePublicKey(announcement.PreferredHostPublicKey)
+	if err != nil {
+		return err
+	}
+	if err := stream.Send(&api.InstructionResponse{
+		Fingerprint: ssh.FingerprintSHA256(pk),
+	}); err != nil {
+		return err
+	}
+
+	instructionC := make(chan interface{})
+	timer := time.NewTimer(10 * time.Second)
 	for {
-		rcv, err := stream.Recv()
-		if err != nil {
-			return err
+		go func() {
+			rcv, err := stream.Recv()
+			if err != nil {
+				instructionC <- err
+			} else {
+				instructionC <- rcv
+			}
+		}()
+		var rcv *api.Instruction
+		timer.Reset(10 * time.Second)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case in := <-instructionC:
+			switch v := in.(type) {
+			case error:
+				return v
+			case *api.Instruction:
+				rcv = v
+			}
+		case <-timer.C:
+			logrus.Warn("Timed out waiting for instructions from relay")
+			return stream.CloseSend()
 		}
 		switch in := rcv.Instruction.(type) {
 		case *api.Instruction_Dismiss:

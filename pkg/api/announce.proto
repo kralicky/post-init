@@ -1,0 +1,43 @@
+syntax = "proto3";
+option go_package = "github.com/kralicky/post-init/pkg/api";
+import "google/protobuf/empty.proto";
+package api;
+
+message Announcement {
+  UnameInfo Uname = 1;
+  NetworkInfo Network = 2;
+  bytes PreferredHostPublicKey = 3;
+  repeated AuthorizedKey AuthorizedKeys = 4;
+}
+
+message UnameInfo {
+  string KernelName = 1;
+  string Hostname = 2;
+  string KernelRelease = 3;
+  string KernelVersion = 4;
+  string Machine = 5;
+}
+
+message NetworkInfo {
+  repeated NetworkInterface NetworkInterfaces = 1;
+}
+
+message NetworkInterface {
+  string Device = 1;
+  bool Up = 2;
+  repeated Addr Addresses = 3;
+}
+
+message Addr {
+  string Cidr = 1;
+  string Address = 2;
+  string Mask = 3;
+}
+
+message AuthorizedKey {
+  string User = 1;
+  string Type = 2;
+  string Fingerprint = 3;
+  string Comment = 5;
+  repeated string Options = 4;
+}

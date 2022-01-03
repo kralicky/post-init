@@ -1,0 +1,21 @@
+syntax = "proto3";
+option go_package = "github.com/kralicky/post-init/pkg/api";
+import "google/protobuf/empty.proto";
+import "instructions.proto";
+import "announce.proto";
+package api;
+
+service PostletAPI {
+  rpc Announce(Announcement) returns (AnnouncementResponse);
+}
+
+service Instruction {
+  rpc Command(CommandRequest) returns (CommandResponse);
+  rpc Script(ScriptRequest) returns (ScriptResponse);
+  rpc Dismiss(google.protobuf.Empty) returns (google.protobuf.Empty);
+}
+
+message AnnouncementResponse {
+  bool Accept = 1;
+  string Message = 2;
+}

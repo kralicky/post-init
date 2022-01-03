@@ -17,10 +17,10 @@ import (
 //
 // Both the client and server generate an ephemeral key pair and exchange
 // public keys, which are used to generate a shared secret. The shared secret
-// is signed using the client's private ssh key and sent to the server for
-// verification. If the server verifies the signature, the client proves
-// ownership of the private key corresponding to the public key it sent
-// in the initial exchange.
+// is signed using the client's private ssh key and the signature (sans payload)
+// is sent to the server for verification. If the server verifies the signature,
+// the client proves ownership of the private key corresponding to the public
+// key it sent in the initial exchange.
 
 var ErrInvalidKeyFormat = errors.New("invalid key format")
 
@@ -30,7 +30,7 @@ func GenerateKeyPair() (crypto.PrivateKey, crypto.PublicKey, error) {
 		return nil, nil, err
 	}
 
-	public, err := curve25519.X25519(curve25519.Basepoint, private.Bytes())
+	public, err := curve25519.X25519(private.Bytes(), curve25519.Basepoint)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -49,23 +49,33 @@ func SharedSecret(private crypto.PrivateKey, public crypto.PublicKey) ([]byte, e
 	return curve25519.X25519(private.([]byte), public.([]byte))
 }
 
+func GenerateNonce() ([]byte, error) {
+	nonce := make([]byte, 8)
+	if _, err := io.ReadFull(crand.Reader, nonce); err != nil {
+		return nil, err
+	}
+	return nonce, nil
+}
+
 // this isn't a real ssh connection so we're improvising a bit on the format
 
 func Sign(
+	privateKey ssh.Signer,
 	kexRequest *api.KexRequest,
-	clientEphemeralPublicKey crypto.PublicKey,
-	publicClientKey []byte,
+	nonce []byte,
+	serverEphPubKey []byte,
+	clientEphPubKey []byte,
+	clientPublicKey ssh.PublicKey,
 	sharedSecret []byte,
-	sshPrivateKey ssh.Signer,
 ) ([]byte, error) {
 	buf := new(bytes.Buffer)
-	buf.Write(kexRequest.Nonce)
-	buf.Write(kexRequest.PublicHostKey)
-	buf.Write(kexRequest.ServerEphemeralPublicKey)
-	buf.Write(clientEphemeralPublicKey.([]byte))
-	buf.Write(publicClientKey)
+	buf.Write(nonce)
+	buf.Write(serverEphPubKey)
+	buf.Write(clientEphPubKey)
+	buf.Write(clientPublicKey.Marshal())
 	buf.Write(sharedSecret)
-	signature, err := sshPrivateKey.Sign(crand.Reader, buf.Bytes())
+
+	signature, err := privateKey.Sign(crand.Reader, buf.Bytes())
 	if err != nil {
 		return nil, err
 	}
@@ -73,27 +83,24 @@ func Sign(
 }
 
 func Verify(
-	connectionRequest *api.ConnectionRequest,
-	kexRequest *api.KexRequest,
-	kexResponse *api.KexResponse,
+	clientSignature []byte,
+	nonce []byte,
+	serverEphPubKey []byte,
+	clientEphPubKey []byte,
+	clientPublicKey ssh.PublicKey,
 	sharedSecret []byte,
-	sshPrivateKey ssh.Signer,
 ) error {
 	buf := new(bytes.Buffer)
-	buf.Write(kexRequest.Nonce)
-	buf.Write(kexRequest.PublicHostKey)
-	buf.Write(kexRequest.ServerEphemeralPublicKey)
-	buf.Write(kexResponse.ClientEphemeralPublicKey)
-	buf.Write(connectionRequest.PublicClientKey)
+	buf.Write(nonce)
+	buf.Write(serverEphPubKey)
+	buf.Write(clientEphPubKey)
+	buf.Write(clientPublicKey.Marshal())
 	buf.Write(sharedSecret)
 
 	signature := ssh.Signature{}
-	if err := ssh.Unmarshal(kexResponse.Signature, &signature); err != nil {
+	if err := ssh.Unmarshal(clientSignature, &signature); err != nil {
 		return err
 	}
-	publicClientKey, err := ssh.ParsePublicKey(connectionRequest.PublicClientKey)
-	if err != nil {
-		return err
-	}
-	return publicClientKey.Verify(buf.Bytes(), &signature)
+
+	return clientPublicKey.Verify(buf.Bytes(), &signature)
 }

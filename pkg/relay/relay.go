@@ -1,18 +1,14 @@
 package relay
 
 import (
-	"bytes"
 	context "context"
-	crand "crypto/rand"
-	"io"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/kralicky/post-init/pkg/api"
+	"github.com/kralicky/totem"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/crypto/ssh"
-	grpc "google.golang.org/grpc"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -53,23 +49,11 @@ func Insecure(insecure bool) RelayServerOption {
 	}
 }
 
-type activeDaemon struct {
-	Announcement *api.Announcement
-	Stream       api.Relay_StreamInstructionsServer
-	Instructions chan *activeInstruction
-}
-
-type activeInstruction struct {
-	Instruction *api.Instruction
-	ResponseC   chan *api.InstructionResponse
-}
-
 type Server struct {
 	api.UnimplementedRelayServer
 	options RelayServerOptions
 
-	activeDaemonsLock sync.Mutex
-	activeDaemons     map[string]activeDaemon
+	ctrl Controller
 }
 
 func NewRelayServer(opts ...RelayServerOption) *Server {
@@ -78,6 +62,7 @@ func NewRelayServer(opts ...RelayServerOption) *Server {
 	}
 	options.Apply(opts...)
 	return &Server{
+		ctrl:    NewController(),
 		options: options,
 	}
 }
@@ -87,11 +72,11 @@ func (rs *Server) Serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	logrus.Infof("Listening on %s", rs.options.listenAddress)
+	logrus.Infof("Listening on %s", listener.Addr().String())
 	options := []grpc.ServerOption{}
 	if rs.options.insecure {
 		options = append(options, grpc.Creds(insecure.NewCredentials()))
-		logrus.Warn("POST-INIT SERVER IS RUNNING IN INSECURE MODE - DO NOT USE IN PRODUCTION")
+		logrus.Warn("RELAY IS RUNNING IN INSECURE MODE - DO NOT USE IN PRODUCTION")
 	} else {
 		creds, err := credentials.NewServerTLSFromFile(
 			rs.options.servingCert, rs.options.servingKey)
@@ -105,133 +90,38 @@ func (rs *Server) Serve(ctx context.Context) error {
 	return grpcServer.Serve(listener)
 }
 
-func (rs *Server) Announce(
-	ctx context.Context,
-	an *api.Announcement,
-) (*api.Response, error) {
-	logrus.Info("Announcement received")
+func (rs *Server) PostletStream(stream api.Relay_PostletStreamServer) error {
+	ts := totem.NewServer(stream)
 
-	rs.activeDaemonsLock.Lock()
-	pubKey, err := ssh.ParsePublicKey(an.PreferredHostPublicKey)
-	if err != nil {
-		return nil, err
-	}
-	fingerprint := ssh.FingerprintSHA256(pubKey)
-	rs.activeDaemons[fingerprint] = activeDaemon{
-		Announcement: an,
-	}
-	rs.activeDaemonsLock.Unlock()
+	server := NewPostletAPIServer(rs.ctrl)
+	api.RegisterPostletAPIServer(ts, server)
 
-	return &api.Response{
-		Accept:  true,
-		Message: "Hello world",
-	}, nil
-}
+	cond := make(chan struct{})
+	cc, errC := ts.Serve(cond)
+	server.InitClients(cc)
+	close(cond)
 
-func (rs *Server) StreamInstructions(
-	stream api.Relay_StreamInstructionsServer,
-) error {
-	logrus.Info("Streaming instructions for daemon")
-	r, err := stream.Recv()
-	if err != nil {
+	select {
+	case <-server.AnnouncementReceived():
+		err := <-errC
 		return err
+	case <-time.After(time.Second * 5):
+		return status.Error(codes.DeadlineExceeded, "timed out waiting for announcement")
+	case <-errC:
+		return status.Error(codes.Aborted, "stream error")
 	}
-	if r.Fingerprint == "" {
-		return status.Error(codes.FailedPrecondition, "daemon did not send fingerprint")
-	}
-
-	instructionsC := make(chan *activeInstruction)
-	rs.activeDaemonsLock.Lock()
-	if daemon, ok := rs.activeDaemons[r.Fingerprint]; ok {
-		daemon.Stream = stream
-		daemon.Instructions = instructionsC
-		rs.activeDaemons[r.Fingerprint] = daemon
-	} else {
-		logrus.Error("error: daemon did not announce")
-		return status.Error(codes.FailedPrecondition, "daemon did not announce")
-	}
-	rs.activeDaemonsLock.Unlock()
-
-	timeout := time.After(10 * time.Second)
-
-LOOP:
-	for {
-		select {
-		case <-timeout:
-			break LOOP
-		case instruction := <-instructionsC:
-			err := stream.Send(instruction.Instruction)
-			if err != nil {
-				instruction.ResponseC <- &api.InstructionResponse{
-					Result: api.Result_Error,
-					Error:  err.Error(),
-				}
-			} else {
-				response, err := stream.Recv()
-				if err != nil {
-					instruction.ResponseC <- &api.InstructionResponse{
-						Result: api.Result_Error,
-						Error:  err.Error(),
-					}
-				} else {
-					instruction.ResponseC <- response
-				}
-			}
-		}
-	}
-	return dismiss(stream)
 }
 
-func (rs *Server) Notify(
-	match *api.NotifyMatch,
-	stream api.Relay_NotifyServer,
-) error {
-	// todo
-	return nil
-}
+func (rs *Server) ClientStream(stream api.Relay_ClientStreamServer) error {
+	ts := totem.NewServer(stream)
 
-func (rs *Server) SendInstruction(
-	ctx context.Context,
-	instruction *api.Instruction,
-) (*api.InstructionResponse, error) {
-	// todo
-	return nil, nil
-}
+	server := NewClientAPIServer(rs.ctrl)
+	api.RegisterClientAPIServer(ts, server)
 
-func (rs *Server) ClientConnect(
-	stream api.Relay_ClientConnectServer,
-) error {
-	logrus.Info("Client connected")
-	nonce := bytes.NewBuffer(make([]byte, 32))
-	io.CopyN(nonce, crand.Reader, 32)
+	cond := make(chan struct{})
+	cc, errC := ts.Serve(cond)
+	server.InitClients(cc)
+	close(cond)
 
-	r, err := stream.Recv()
-	if err != nil {
-		return err
-	}
-	var connectionRequest *api.ConnectionRequest
-	if cr, ok := r.Request.(*api.ClientConnectRequest_ConnectionRequest); ok {
-		connectionRequest = cr.ConnectionRequest
-		stream.Send(&api.ClientConnectResponse{
-			Response: &api.ClientConnectResponse_ConnectionResponse{
-				ConnectionResponse: &api.ConnectionResponse{
-					Accept: true,
-				},
-			},
-		})
-	}
-
-	connectionRequest.String()
-	// todo
-	return nil
-}
-
-func dismiss(stream api.Relay_StreamInstructionsServer) error {
-	if err := stream.Send(&api.Instruction{
-		Instruction: &api.Instruction_Dismiss{},
-	}); err != nil {
-		return err
-	}
-	_, err := stream.Recv()
-	return err
+	return <-errC
 }

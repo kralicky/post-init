@@ -1,0 +1,63 @@
+syntax = "proto3";
+option go_package = "github.com/kralicky/post-init/pkg/api";
+import "google/protobuf/empty.proto";
+import "instructions.proto";
+import "announce.proto";
+package api;
+
+
+service ClientAPI {
+  rpc Connect(ConnectionRequest) returns (ConnectionResponse);
+  rpc Watch(WatchRequest) returns (google.protobuf.Empty);
+  rpc RunCommand(CommandRequest) returns (CommandResponse);
+  rpc RunScript(ScriptRequest) returns (ScriptResponse);
+}
+
+
+service KeyExchange {
+  rpc ExchangeKeys(KexRequest) returns (KexResponse);
+  rpc Sign(SignRequest) returns (SignResponse);
+}
+
+service Watch {
+  rpc Notify(Announcement) returns (google.protobuf.Empty);
+}
+
+message ConnectionRequest {
+  bytes PublicClientKey = 1;
+}
+
+message ConnectionResponse {
+}
+
+enum Operator {
+  And = 0;
+  Or = 1;
+}
+
+message WatchRequest {
+  BasicFilter Filter = 1;
+}
+
+message BasicFilter {
+  Operator Operator = 1;
+  string HasAuthorizedKey = 2;
+  string HasIPAddress = 3;
+  string HasHostname = 4;
+}
+
+message KexRequest {
+  bytes ServerEphemeralPublicKey = 1;
+}
+
+message KexResponse {
+  bytes ClientEphemeralPublicKey = 1;
+}
+
+message SignRequest {
+  bytes Nonce = 1;
+}
+
+message SignResponse {
+  bytes Signature = 1;
+}
