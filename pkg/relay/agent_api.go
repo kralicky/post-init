@@ -10,8 +10,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type postletApiServer struct {
-	api.UnimplementedPostletAPIServer
+type agentApiServer struct {
+	api.UnimplementedAgentAPIServer
 	ctrl Controller
 
 	// Filled in by the relay server
@@ -21,18 +21,18 @@ type postletApiServer struct {
 	anRecv chan struct{}
 }
 
-func NewPostletAPIServer(ctrl Controller) *postletApiServer {
-	return &postletApiServer{
+func NewAgentAPIServer(ctrl Controller) *agentApiServer {
+	return &agentApiServer{
 		ctrl:   ctrl,
 		anRecv: make(chan struct{}),
 	}
 }
 
-func (s *postletApiServer) InitClients(cc grpc.ClientConnInterface) {
+func (s *agentApiServer) InitClients(cc grpc.ClientConnInterface) {
 	s.instructionClient = api.NewInstructionClient(cc)
 }
 
-func (s *postletApiServer) Announce(
+func (s *agentApiServer) Announce(
 	ctx context.Context,
 	an *api.Announcement,
 ) (*api.AnnouncementResponse, error) {
@@ -43,7 +43,7 @@ func (s *postletApiServer) Announce(
 	}
 
 	close(s.anRecv)
-	s.ctrl.PostletConnected(ctx, an, s.instructionClient)
+	s.ctrl.AgentConnected(ctx, an, s.instructionClient)
 
 	return &api.AnnouncementResponse{
 		Accept:  true,
@@ -51,6 +51,6 @@ func (s *postletApiServer) Announce(
 	}, nil
 }
 
-func (s *postletApiServer) AnnouncementReceived() <-chan struct{} {
+func (s *agentApiServer) AnnouncementReceived() <-chan struct{} {
 	return s.anRecv
 }

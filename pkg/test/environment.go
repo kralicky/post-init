@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/kralicky/post-init/pkg/agent"
 	"github.com/kralicky/post-init/pkg/relay"
 	"github.com/kralicky/post-init/pkg/sdk"
 	"github.com/mholt/archiver/v3"
@@ -165,13 +166,13 @@ func (e *Environment) SpawnRelay() {
 	}()
 }
 
-func (e *Environment) SpawnDaemon(authorizedKeys ...ssh.PublicKey) {
-	d := daemon.NewDaemon(
-		daemon.WithInsecure(false),
-		daemon.WithRelayAddress(e.RelayAddr),
-		daemon.WithRelayCACert(e.Certs.CACert),
-		daemon.WithTimeout(2*time.Second),
-		daemon.WithExtraAuthorizedKeys(func() []string {
+func (e *Environment) SpawnAgent(authorizedKeys ...ssh.PublicKey) {
+	a := agent.New(
+		agent.WithInsecure(false),
+		agent.WithRelayAddress(e.RelayAddr),
+		agent.WithRelayCACert(e.Certs.CACert),
+		agent.WithTimeout(2*time.Second),
+		agent.WithExtraAuthorizedKeys(func() []string {
 			var keys []string
 			for _, k := range authorizedKeys {
 				keys = append(keys, string(ssh.MarshalAuthorizedKey(k)))
@@ -180,9 +181,10 @@ func (e *Environment) SpawnDaemon(authorizedKeys ...ssh.PublicKey) {
 		}()...),
 	)
 	go func() {
+		defer GinkgoRecover()
 		ctx, ca := context.WithCancel(e.Context)
 		defer ca()
-		if err := d.Start(ctx); err != nil {
+		if err := a.Start(ctx); err != nil {
 			panic(err)
 		}
 	}()
@@ -218,8 +220,7 @@ func (e *Environment) Destroy() error {
 	if e == nil {
 		return nil
 	}
-	err := os.RemoveAll(e.TempDir)
-	if err != nil {
+	if err := os.RemoveAll(e.TempDir); err != nil {
 		return err
 	}
 	return nil

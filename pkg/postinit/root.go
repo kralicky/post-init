@@ -15,7 +15,7 @@ func CreateRootCmd() *cobra.Command {
 		},
 	}
 
-	rootCmd.AddCommand(commands.BuildPostletCmd())
+	rootCmd.AddCommand(commands.BuildAgentCmd())
 	rootCmd.AddCommand(commands.BuildRelayCmd())
 	return rootCmd
 }

@@ -90,11 +90,11 @@ func (rs *Server) Serve(ctx context.Context) error {
 	return grpcServer.Serve(listener)
 }
 
-func (rs *Server) PostletStream(stream api.Relay_PostletStreamServer) error {
+func (rs *Server) AgentStream(stream api.Relay_AgentStreamServer) error {
 	ts := totem.NewServer(stream)
 
-	server := NewPostletAPIServer(rs.ctrl)
-	api.RegisterPostletAPIServer(ts, server)
+	server := NewAgentAPIServer(rs.ctrl)
+	api.RegisterAgentAPIServer(ts, server)
 
 	cond := make(chan struct{})
 	cc, errC := ts.Serve(cond)

@@ -5,19 +5,20 @@ import (
 	"sync"
 
 	"github.com/kralicky/post-init/pkg/api"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 type Controller interface {
-	PostletConnected(ctx context.Context, an *api.Announcement, client api.InstructionClient)
+	AgentConnected(ctx context.Context, an *api.Announcement, client api.InstructionClient)
 	ClientConnected(ctx context.Context, clientKey ssh.PublicKey)
 	Watch(ctx context.Context, clientKey ssh.PublicKey, req *api.WatchRequest) (<-chan *api.Announcement, error)
 	Lookup(ctx context.Context, fingerprint string) (api.InstructionClient, error)
 }
 
-type activePostlet struct {
+type activeAgent struct {
 	client       api.InstructionClient
 	announcement *api.Announcement
 }
@@ -28,30 +29,36 @@ type activeWatch struct {
 }
 
 type controller struct {
-	mu             sync.Mutex
-	activePostlets map[string]activePostlet
-	activeClients  map[string]ssh.PublicKey
-	activeWatches  map[string]activeWatch
+	mu            sync.Mutex
+	activeAgents  map[string]activeAgent
+	activeClients map[string]ssh.PublicKey
+	activeWatches map[string]activeWatch
 }
 
 func NewController() Controller {
 	return &controller{
-		activePostlets: make(map[string]activePostlet),
+		activeAgents:  make(map[string]activeAgent),
+		activeClients: make(map[string]ssh.PublicKey),
+		activeWatches: make(map[string]activeWatch),
 	}
 }
 
-func (c *controller) PostletConnected(ctx context.Context, an *api.Announcement, client api.InstructionClient) {
+func (c *controller) AgentConnected(ctx context.Context, an *api.Announcement, client api.InstructionClient) {
+	logrus.Info("Agent connected: " + string(an.PreferredHostPublicKey))
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	fp, _ := an.Fingerprint() // error already checked in Announce
-	c.activePostlets[fp] = activePostlet{
+	c.activeAgents[fp] = activeAgent{
 		client:       client,
 		announcement: an,
 	}
 	for _, authorizedKey := range an.AuthorizedKeys {
 		if watch, ok := c.activeWatches[authorizedKey.Fingerprint]; ok {
 			if an.FilterAccepts(watch.req.Filter) {
+				logrus.Info("Handling late-join")
 				watch.ch <- an
+			} else {
+				logrus.Info("Filtered out late-join")
 			}
 		}
 	}
@@ -59,11 +66,12 @@ func (c *controller) PostletConnected(ctx context.Context, an *api.Announcement,
 		<-ctx.Done()
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		delete(c.activePostlets, fp)
+		delete(c.activeAgents, fp)
 	}()
 }
 
 func (c *controller) ClientConnected(ctx context.Context, clientKey ssh.PublicKey) {
+	logrus.Info("Client connected")
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	fp := ssh.FingerprintSHA256(clientKey)
@@ -78,6 +86,7 @@ func (c *controller) ClientConnected(ctx context.Context, clientKey ssh.PublicKe
 }
 
 func (c *controller) Watch(ctx context.Context, clientKey ssh.PublicKey, req *api.WatchRequest) (<-chan *api.Announcement, error) {
+	logrus.Info("Watch requested by client")
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	fp := ssh.FingerprintSHA256(clientKey)
@@ -93,8 +102,9 @@ func (c *controller) Watch(ctx context.Context, clientKey ssh.PublicKey, req *ap
 		req: req,
 	}
 	// late join; all other notifications happen upon receiving announcements
-	for _, v := range c.activePostlets {
+	for _, v := range c.activeAgents {
 		if v.announcement.FilterAccepts(req.Filter) {
+			logrus.Info("Handling late-join")
 			ch <- v.announcement
 		}
 	}
@@ -104,7 +114,7 @@ func (c *controller) Watch(ctx context.Context, clientKey ssh.PublicKey, req *ap
 func (c *controller) Lookup(ctx context.Context, fingerprint string) (api.InstructionClient, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if an, ok := c.activePostlets[fingerprint]; ok {
+	if an, ok := c.activeAgents[fingerprint]; ok {
 		return an.client, nil
 	}
 	return nil, status.Error(codes.NotFound, "not found")

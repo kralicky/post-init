@@ -7,8 +7,6 @@ import (
 	"errors"
 	"io"
 
-	"github.com/kralicky/post-init/pkg/api"
-
 	"golang.org/x/crypto/curve25519"
 	"golang.org/x/crypto/ssh"
 )
@@ -25,7 +23,7 @@ import (
 var ErrInvalidKeyFormat = errors.New("invalid key format")
 
 func GenerateKeyPair() (crypto.PrivateKey, crypto.PublicKey, error) {
-	private := bytes.NewBuffer(make([]byte, 32))
+	private := bytes.NewBuffer(make([]byte, 0, 32))
 	if _, err := io.CopyN(private, crand.Reader, 32); err != nil {
 		return nil, nil, err
 	}
@@ -61,18 +59,16 @@ func GenerateNonce() ([]byte, error) {
 
 func Sign(
 	privateKey ssh.Signer,
-	kexRequest *api.KexRequest,
 	nonce []byte,
 	serverEphPubKey []byte,
 	clientEphPubKey []byte,
-	clientPublicKey ssh.PublicKey,
 	sharedSecret []byte,
 ) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	buf.Write(nonce)
 	buf.Write(serverEphPubKey)
 	buf.Write(clientEphPubKey)
-	buf.Write(clientPublicKey.Marshal())
+	buf.Write(privateKey.PublicKey().Marshal())
 	buf.Write(sharedSecret)
 
 	signature, err := privateKey.Sign(crand.Reader, buf.Bytes())

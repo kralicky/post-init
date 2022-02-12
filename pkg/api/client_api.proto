@@ -7,7 +7,7 @@ package api;
 
 
 service ClientAPI {
-  rpc Connect(ConnectionRequest) returns (ConnectionResponse);
+  rpc Connect(ConnectionRequest) returns (google.protobuf.Empty);
   rpc Watch(WatchRequest) returns (google.protobuf.Empty);
   rpc RunCommand(CommandRequest) returns (CommandResponse);
   rpc RunScript(ScriptRequest) returns (ScriptResponse);
@@ -25,9 +25,6 @@ service Watch {
 
 message ConnectionRequest {
   bytes PublicClientKey = 1;
-}
-
-message ConnectionResponse {
 }
 
 enum Operator {

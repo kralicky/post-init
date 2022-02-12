@@ -7,10 +7,10 @@ package api;
 
 service Relay {
   // Server side:
-  // - PostletAPIService
+  // - AgentAPIService
   // Client side:
   // - InstructionService
-  rpc PostletStream(stream totem.RPC) returns (stream totem.RPC);
+  rpc AgentStream(stream totem.RPC) returns (stream totem.RPC);
 
   // Server side:
   // - ClientAPIService

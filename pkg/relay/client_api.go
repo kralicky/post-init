@@ -75,6 +75,7 @@ func (s *clientApiServer) Watch(
 		for {
 			select {
 			case <-ctx.Done():
+				return
 			case an := <-ch:
 				s.watchClient.Notify(ctx, an)
 			}
@@ -130,7 +131,7 @@ func (s *clientApiServer) verifyClientPublicKey(ctx context.Context, clientPubKe
 
 	clientEphPub := resp.ClientEphemeralPublicKey
 	if len(clientEphPub) != len(serverEphPub.([]byte)) {
-		return status.Error(codes.InvalidArgument, "key exchange failed: client send invalid ephemeral public key")
+		return status.Error(codes.InvalidArgument, "key exchange failed: client sent invalid ephemeral public key")
 	}
 
 	sharedSecret, err := kex.SharedSecret(serverEphPriv, clientEphPub)

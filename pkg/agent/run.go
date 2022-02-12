@@ -1,4 +1,4 @@
-package postlet
+package agent
 
 import (
 	"bytes"
@@ -8,7 +8,7 @@ import (
 	"github.com/kralicky/post-init/pkg/api"
 )
 
-func RunCommand(cmd *api.Command) (*api.CommandOutput, error) {
+func RunCommand(cmd *api.Command) (*api.CommandResponse, error) {
 	c := exec.Command(cmd.Command, cmd.Args...)
 	c.Env = append(os.Environ(), cmd.Env...)
 	stdoutBuf := &bytes.Buffer{}
@@ -23,14 +23,14 @@ func RunCommand(cmd *api.Command) (*api.CommandOutput, error) {
 			return nil, err
 		}
 	}
-	return &api.CommandOutput{
+	return &api.CommandResponse{
 		Stdout:   stdoutBuf.String(),
 		Stderr:   stderrBuf.String(),
 		ExitCode: int32(c.ProcessState.ExitCode()),
 	}, nil
 }
 
-func RunScript(cmd *api.Script) (*api.ScriptOutput, error) {
+func RunScript(cmd *api.Script) (*api.ScriptResponse, error) {
 	// Write a temporary file with the script
 	f, err := os.CreateTemp("", "post-init-*")
 	if err != nil {
@@ -56,7 +56,7 @@ func RunScript(cmd *api.Script) (*api.ScriptOutput, error) {
 			return nil, err
 		}
 	}
-	return &api.ScriptOutput{
+	return &api.ScriptResponse{
 		Stdout:   stdoutBuf.String(),
 		Stderr:   stderrBuf.String(),
 		ExitCode: int32(c.ProcessState.ExitCode()),

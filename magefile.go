@@ -1,58 +1,60 @@
 //go:build mage
-// +build mage
 
 package main
 
 import (
-	"os"
-	"path/filepath"
-
-	"github.com/kralicky/ragu/pkg/ragu"
 	"github.com/magefile/mage/mg"
-	"github.com/magefile/mage/sh"
+
+	// mage:import
+	"github.com/kralicky/spellbook/build"
+	// mage:import
+	"github.com/kralicky/spellbook/mockgen"
+	// mage:import
+	_ "github.com/kralicky/spellbook/test/ginkgo"
+	// mage:import
+	protobuf "github.com/kralicky/spellbook/protobuf/ragu"
 )
 
 var Default = All
 
 func All() {
-	mg.SerialDeps(Generate, Build)
+	mg.Deps(build.Build)
 }
 
-func Generate() error {
-	files := []string{
-		"pkg/api/relay.proto",
-		"pkg/api/postlet_api.proto",
-		"pkg/api/client_api.proto",
-		"pkg/api/announce.proto",
-		"pkg/api/instructions.proto",
-	}
-	for _, f := range files {
-		relayProtos, err := ragu.GenerateCode(f, true)
-		if err != nil {
-			return err
-		}
-		for _, p := range relayProtos {
-			path := filepath.Join("pkg/api", p.GetName())
-			if info, err := os.Stat(path); err == nil {
-				if info.Mode()&0200 == 0 {
-					if err := os.Chmod(path, 0644); err != nil {
-						return err
-					}
-				}
-			}
-			if err := os.WriteFile(path, []byte(p.GetContent()), 0444); err != nil {
-				return err
-			}
-			if err := os.Chmod(path, 0444); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+func Generate() {
+	mg.Deps(mockgen.Mockgen, protobuf.Protobuf)
 }
 
-func Build() error {
-	return sh.RunWithV(map[string]string{
-		"CGO_ENABLED": "0",
-	}, mg.GoCmd(), "build", "-ldflags", `-w -s`, "-o", "./bin/post-init", "./cmd/post-init")
+func init() {
+	build.Deps(Generate)
+
+	protobuf.Config.Protos = []protobuf.Proto{
+		{
+			Source:  "pkg/api/relay.proto",
+			DestDir: "pkg/api",
+		},
+		{
+			Source:  "pkg/api/agent_api.proto",
+			DestDir: "pkg/api",
+		},
+		{
+			Source:  "pkg/api/client_api.proto",
+			DestDir: "pkg/api",
+		},
+		{
+			Source:  "pkg/api/announce.proto",
+			DestDir: "pkg/api",
+		},
+		{
+			Source:  "pkg/api/instructions.proto",
+			DestDir: "pkg/api",
+		},
+	}
+	mockgen.Config.Mocks = []mockgen.Mock{
+		{
+			Source: "pkg/api/agent_api_grpc.pb.go",
+			Dest:   "pkg/test/mock/api/mock_agent_api_grpc.go",
+			Types:  []string{"InstructionClient"},
+		},
+	}
 }

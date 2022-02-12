@@ -17,19 +17,19 @@ var _ = Describe("Basic Integration", func() {
 	Specify("setup relay", func() {
 		testEnv.SpawnRelay()
 	})
-	Specify("setup daemon", func() {
-		testEnv.SpawnDaemon(signer.PublicKey())
-	})
+	// Specify("setup agent", func() {
+	// 	testEnv.SpawnAgent(signer.PublicKey())
+	// })
 	Specify("setup client", func() {
 		c := testEnv.NewClient(signer)
-		clientCtx, ca := context.WithTimeout(context.Background(), 30*time.Second)
+		clientCtx, ca := context.WithTimeout(context.Background(), 5*time.Second)
 		defer ca()
 		Expect(c.Connect(clientCtx)).To(Succeed())
 		done := make(chan struct{})
-		err := c.Notify(clientCtx, &api.BasicFilter{
+		err := c.Watch(clientCtx, &api.BasicFilter{
 			Operator:         api.Operator_Or,
 			HasAuthorizedKey: string(ssh.MarshalAuthorizedKey(signer.PublicKey())),
-		}, func(cc *sdk.ControlContext) {
+		}, func(cc sdk.ControlContext) {
 			output, err := cc.RunCommand(&api.Command{
 				Command: "echo",
 				Args:    []string{"hello", "world"},
@@ -38,7 +38,9 @@ var _ = Describe("Basic Integration", func() {
 			Expect(output.Stdout).To(Equal("hello world\n"))
 			close(done)
 		})
-		Eventually(done).Should(BeClosed())
+		testEnv.SpawnAgent(signer.PublicKey())
+
+		Eventually(done, 3*time.Second, 100*time.Millisecond).Should(BeClosed())
 		Expect(err).To(BeNil())
 	})
 })
